@@ -6,17 +6,29 @@ library(readxl)
 pyl = data.frame(read_xlsx("Pyeloplasty.xlsx"))
 head(pyl)
 
+###
+###   excluding Angiopexy = 1 and time to reoperation >= 30 months
+###
+
+pyl = pyl[pyl$Angiopexy != 1,]
+pyl = pyl[pyl$time_to_event_mo < 30,]
+
+dim(pyl)
+
+###
+###   recoding factor variables
+###
 
 pyl$Anomalies[is.na(pyl$Anomalies)] = 0
 pyl$Anomalies = factor(pyl$Anomalies,levels = 0:5)
 pyl$Sex = factor(pyl$Sex, levels = c(1,2), labels = c("M","F"))
+pyl$Sex_Provider = factor(pyl$Sex_Provider, levels = c(1,2), labels = c("M","F"))
 pyl$Surgeon = factor(pyl$Surgeon,levels = 1:9)
 pyl$Side = factor(pyl$Side, levels = 1:2)
 pyl$Who_indicated = factor(pyl$Who_indicated,1:5)
 pyl$Approach = factor(pyl$Approach,1:4)
 pyl$Intraop_finding[is.na(pyl$Intraop_finding)] = 0
 pyl$Intraop_finding = factor(pyl$Intraop_finding, levels = 0:2)
-pyl$Angiopexy = factor(pyl$Angiopexy, levels = 0:1)
 pyl$Salle_Stent = factor(pyl$Salle_Stent, levels = 0:1)
 pyl$JJ_Stent = factor(pyl$JJ_Stent, levels = 0:1)
 pyl$Nx_Vx_Prophy = factor(pyl$Nx_Vx_Prophy, levels = 0:1)
@@ -51,7 +63,7 @@ outcome_cols = c("Reoperation", "time_to_event_allmo", "REDO" ,"Bounceback" ,  "
 pred_cols = c("Year_Sx","Sex","Age_sx_Mos","Anomalies","Who_indicated"  ,    
               "Sex_Provider"      ,  "Surgeon"            ,
               "Side"              ,  "Approach"           , "Intraop_finding",
-              "Angiopexy"         ,  "Salle_Stent"        , "JJ_Stent"  ,
+              "Salle_Stent"        , "JJ_Stent"  ,
               "OR_Time"           ,  "Nx_Vx_Prophy"       , "Dex" ,
               "Blocks"            ,
               "NG_tube"           ,   "Catheter"  ,
@@ -63,4 +75,5 @@ pred_cols = c("Year_Sx","Sex","Age_sx_Mos","Anomalies","Who_indicated"  ,
               "Return_Diet"       )
 
 
-saveRDS(pyl, file = "C:/Users/lauren erdman/Desktop/pyloplasty/pyloplasty_preproc.rds")
+
+saveRDS(pyl, file = paste0("C:/Users/lauren erdman/Desktop/pyloplasty/pyloplasty_preproc_", Sys.Date(),".rds"))
