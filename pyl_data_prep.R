@@ -84,7 +84,7 @@ pred_cols = c("Year_Sx","Sex","Age_sx_Mos","Anomalies","Who_indicated"  ,
               "Return_Diet"       )
 
 
-fn1 <- paste0("pyloplasty_preproc_y", Sys.Date(),".rds")
-fn2 <- paste0("pyloplasty_preproc_X", Sys.Date(),".rds")
+fn1 <- paste0("pyloplasty_preproc_y_", Sys.Date(),".rds")
+fn2 <- paste0("pyloplasty_preproc_X_", Sys.Date(),".rds")
 saveRDS(pyl[,outcome_cols], file = file.path(dir_data, fn1))
 saveRDS(pyl[,pred_cols], file = file.path(dir_data, fn2))
