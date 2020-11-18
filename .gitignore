@@ -1,3 +1,6 @@
 .Rhistory
 *.xlsx
 *.rds
+.Rproj.user
+data/
+data/*

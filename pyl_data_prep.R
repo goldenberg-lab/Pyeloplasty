@@ -1,9 +1,17 @@
-setwd("C:/Users/lauren erdman/Desktop/pyloplasty/")
+pckgs <- c('stringr','randomForest','readxl')
+for (pp in pckgs) { library(pp,character.only = T)}
 
-library(randomForest)
-library(readxl)
+user <- str_split(getwd(),'\\/')[[1]][3]
+stopifnot(user %in% c('erik drysdale','lauren edrman'))
+if (user == 'erik drysdale') {
+  dir_base <- "C:/Users/erik drysdale/Documents/projects/Pyeloplasty"
+} else {
+  dir_base <- "C:/Users/lauren erdman/Desktop/pyloplasty"
+}
+setwd(dir_base)
+dir_data <- file.path(dir_base, 'data')
 
-pyl = data.frame(read_xlsx("Pyeloplasty.xlsx"))
+pyl = data.frame(read_xlsx(file.path(dir_data,"Pyeloplasty.xlsx")))
 head(pyl)
 
 ###
@@ -11,7 +19,7 @@ head(pyl)
 ###
 
 pyl = pyl[pyl$Angiopexy != 1,]
-pyl = pyl[pyl$time_to_event_mo < 30,]
+pyl = pyl[!((pyl$Time_to_event_allmo > 30) & (pyl$Reoperation == 1)),]
 
 dim(pyl)
 
@@ -51,9 +59,10 @@ pyl$Return_Diet = factor(pyl$Return_Diet, levels = 0:4)
 
 ### OUTCOMES: emergency room (ER) visits/readmissions, 
 ###     unplanned additional procedures, and redo pyeloplasty
-outcome_cols = c("Reoperation", "time_to_event_allmo", "REDO" ,"Bounceback" ,  "BB_Reason", 
+outcome_cols = c("Reoperation", "Time_to_event_allmo", "REDO" ,"Bounceback" ,  "BB_Reason", 
                 "Re_admit"  , "Preop_US",  "Preop_nuc_scan"   , "VCUG"  , 
                 "RPG" ,  "ABdo_Xray"  , "Nephrostogram" ,"LOS_days" , "LOS_hours" )
+
 
 ### PREDICTORS: AGE, SEX, ABD (BASELINE AND FU), DRF
 ###       LOS, use of drains, catheters and/or stents, opioids, 
@@ -75,5 +84,7 @@ pred_cols = c("Year_Sx","Sex","Age_sx_Mos","Anomalies","Who_indicated"  ,
               "Return_Diet"       )
 
 
-
-saveRDS(pyl, file = paste0("C:/Users/lauren erdman/Desktop/pyloplasty/pyloplasty_preproc_", Sys.Date(),".rds"))
+fn1 <- paste0("pyloplasty_preproc_y", Sys.Date(),".rds")
+fn2 <- paste0("pyloplasty_preproc_X", Sys.Date(),".rds")
+saveRDS(pyl[,outcome_cols], file = file.path(dir_data, fn1))
+saveRDS(pyl[,pred_cols], file = file.path(dir_data, fn2))
