@@ -150,8 +150,26 @@ dat_exp %>% filter(vv!='rate') %>% arrange(pval) %>% mutate(pfdr=p.adjust(pval,'
 # lam_exp <- exp(X[ii,,drop=F] %*% bhat_exp)
 # mat[ii,'med_exp']  <- qexp(p=0.5,rate=lam_exp)
 
-# --------- (4) PLOTS ----------- #
+# --------- (3) COMPARE TO SURVIVAL MODELS ----------- #
 
+
+So_all <- with(ydat,Surv(t2e,reop))
+X_all <- model.matrix(~.,data=xdat)[,-1]
+set.seed(1234)
+cox_all <- cv.glmnet(x=X_all, y=So_all, type.measure='C', nfolds=5, family='cox', keep=T)
+conc_all <- apply(cox_all$fit.preval, 2, function(x) concordancefit(y=So_all,x)$concordance)
+max(conc_all)
+
+
+X_cure <- model.matrix(~.,data=X_sub)[,-1]
+y_cure <- So_sub
+set.seed(1234)
+cox_cure <- cv.glmnet(x=X_cure, y=y_cure, type.measure='C', nfolds=5, family='cox', keep=T, weights=y_sub$weights)
+conc_cure <- apply(cox_cure$fit.preval, 2, function(x) concordancefit(y=y_cure,x)$concordance)
+max(conc_cure)
+
+
+# --------- (4) PLOTS ----------- #
 
 # Notice the survival flatline
 plot(survfit(Surv(t2e, reop) ~ 1, data = ydat),
