@@ -69,19 +69,20 @@ outcome_cols = c("Reoperation", "Time_to_event_allmo", "REDO" ,"Bounceback" ,  "
 ###       regional anesthesia, non-opioid analgesia, 
 ###       nausea/vomiting prophylaxis, return to diet, and mobilization
 
-pred_cols = c("Year_Sx","Sex","Age_sx_Mos","Anomalies","Who_indicated"  ,    
-              "Sex_Provider"      ,  "Surgeon"            ,
-              "Side"              ,  "Approach"           , "Intraop_finding",
-              "Salle_Stent"        , "JJ_Stent"  ,
-              "OR_Time"           ,  "Nx_Vx_Prophy"       , "Dex" ,
-              "Blocks"            ,
-              "NG_tube"           ,   "Catheter"  ,
-               "Drain"              , 
-              "Narc_Rx"           ,  "Narc_use"           , 
-              "PCA_use"           ,  "Epidural"  ,
-               "ketoralac"          , "IV_Fluid"  ,
-              "Duration_IV"       ,  "Constipation_prophy", "Mobilization"  ,
-              "Return_Diet"       )
+pred_cols=c("Year_Sx","Sex","Age_sx_Mos","Anomalies","Who_indicated",
+            "Sex_Provider","Surgeon",
+            "Side","Approach","Intraop_finding",
+            "Salle_Stent","JJ_Stent",
+            "OR_Time","Nx_Vx_Prophy","Dex",
+            "Blocks",
+            "NG_tube","Catheter",
+            "Drain",
+            "Narc_Rx","Narc_use",
+            "PCA_use","Epidural",
+            "ketoralac","IV_Fluid",
+            "Duration_IV","Constipation_prophy","Mobilization",
+            "Return_Diet",
+            'Pre_op_APD','Post_op_APD','sec_APD','Last_APD')
 
 
 fn1 <- paste0("pyloplasty_preproc_y_", Sys.Date(),".rds")

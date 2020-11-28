@@ -4,7 +4,7 @@
 pckgs <- c('magrittr','stringr','dplyr','forcats','tibble',
            'cowplot','ggplot2',
            'survival','flexsurv',
-           'glmnet')
+           'glmnet','selectiveInference')
 for (pp in pckgs) { library(pp,character.only = T)}
 
 user <- str_split(getwd(),'\\/')[[1]][3]
@@ -19,11 +19,20 @@ dir_data <- file.path(dir_base, 'data')
 
 auroc <- function(score,y){
   cls <- y == 1
-  n1<-sum(!cls); sum(cls)->n2;
-  U<-sum(rank(score)[!cls])-n1*(n1+1)/2;
+  n1 <- sum(!cls)
+  n2 <- sum(cls)
+  U <- sum(rank(score)[!cls])-n1*(n1+1)/2;
   return(1-U/n1/n2);
 }
 
+# s <- c(1,3,3)
+# l <- c(0,0,1)
+# mltools::auc_roc(s,l)
+# auroc(s,l)
+
+# 6-12 months different than 1-year
+
+###########################################
 # --------- (1) LOAD THE DATA ----------- #
 
 # Find most recent file
@@ -47,147 +56,153 @@ mode_Blocks <- table(xdat$Blocks) %>% sort(T) %>% extract(1) %>% names
 xdat$Blocks <- ifelse(is.na(xdat$Blocks),mode_Blocks, as.character(xdat$Blocks))
 # Aggregate approach
 xdat$Approach <- fct_lump(xdat$Approach,n=2)
+# Missing value imputation for APD
+cn_apd <- c('Pre_op_APD','Post_op_APD','sec_APD','Last_APD')
+X_apd <- xdat[,cn_apd]
+cn_apd <- names(sort(apply(is.na(X_apd),2,sum)))
+# Impute lowest missing with median value, then train iterative regression models
+for (jj in seq(length(cn_apd))) {
+  cn <- cn_apd[jj]
+  yy <- pull(X_apd,cn)
+  if (jj == 1) {
+    print('Median imputation')
+    yy <- ifelse(is.na(yy), median(yy,na.rm = T), yy)
+    X_apd[,cn] <- yy
+  } else {
+    print('Parametric imputation')
+    ff = formula(str_c(cn_apd[jj],str_c(cn_apd[1:jj-1],collapse='+'),sep='~'))
+    mdl <- lm(ff,data=X_apd)
+    print(sprintf('Adjusted R-squard: %0.1f%%, DoF: %i',
+                  summary(mdl)$adj.r.squared*100,mdl$df.residual))
+    yy <- ifelse(is.na(yy), predict(mdl,X_apd), yy)
+    X_apd[,cn] <- yy
+  }
+}
+xdat[,cn_apd] <- X_apd[,cn_apd]
 
+################################################
 # --------- (2) TRAIN A CURE MODEL ----------- #
 
 # Cured == >30 months
 # Not-cured == reop==1
-y_cured <- ydat %>% mutate(cured=ifelse(reop==1,'not-cured', ifelse(t2e >= 30, 'cured', 'unknown'))) %>% 
-                select(c(reop,t2e,cured))
+y_cured <- ydat %>% 
+  mutate(cured=ifelse(reop==1,'not-cured', ifelse(t2e >= 30, 'cured', 'unknown'))) %>% 
+  dplyr::select(c(reop,t2e,cured))
+print(table(y_cured$cured))
 # one-hot encode x-matrix
 Xmat <- model.matrix(~., data=xdat)[,-1]
-# Xmat <- cbind(t2e=y_cured$t2e,Xmat)
+stopifnot(nrow(Xmat) == nrow(xdat))  # Ensure no missing values
 cn_drop <- names(which(apply(Xmat,2,var) < 0.01))
+print(sprintf('Removing %i columns for low variance: %s',
+              length(cn_drop),str_c(cn_drop,collapse=', ')))
 stopifnot(length(cn_drop)==0)
 # Subset to y_cured labels
 idx_keep <- which(y_cured$cured!='unknown')
-
-y_cured[idx_keep,] %>% head
-Xmat[idx_keep,] %>% head(1) %>% t
-
-jj <- 0
-phat <- rep(NA, length(idx_keep))
-for (ii in idx_keep) {
-  jj <- jj + 1
-  if (jj %% 50 == 0) {
-    print(jj)
-  }
-  itrain <- idx_keep[-jj]
-  iX <- Xmat[itrain,]
-  mu_X <- apply(iX,2,mean)
-  se_X <- apply(iX,2,sd)
-  iX <- sweep(sweep(iX,2,mu_X,'-'),2,se_X,'/')
-  iy <- ifelse(y_cured[itrain,]$cured=='cured',1,0)
-  # Fit logistic lasso
-  ilasso <- glmnet(x=iX,y=iy,family='binomial',nlambda=100,standardize=F)
-  eta_mat <- as.matrix(cbind(1,iX) %*% coef(ilasso))
-  phat_mat <- 1/(1+exp(-eta_mat))
-  res_mat <- iy - phat_mat
-  e2 <- apply(res_mat, 2, function(x) sqrt(sum(x**2)))
-  z2 <- nrow(iX)*ilasso$lambda / e2
-  thresh <- qnorm(1-0.05/ncol(iX))
-  istar <- which.min((z2 - thresh)^2)
-  ibhat <- coef(ilasso)[,istar]
-  phat[jj] <- as.numeric(c(Intercept=1,(Xmat[ii,]-mu_X)/se_X) %*% ibhat)
-}
-
-auc_roc(phat,ifelse(y_cured[idx_keep,]$cured=='cured',1,0))
-
-X_cure <- Xmat[idx_keep,]
+# Create glmnet-friendly dataformat
+X_cure <- as.matrix(Xmat[idx_keep,])
 y_cure <- ifelse(y_cured[idx_keep,]$cured=='cured',1,0)
+X_cure_s <- scale(X_cure)
+mu_X_cure <- attr(X_cure_s,'scaled:center')
+se_X_cure <- attr(X_cure_s,'scaled:scale')
 
-set.seed(1234)
-mdl_cv <- cv.glmnet(x=X_cure,y=y_cure, family='binomial',
-                    nfolds = 5, keep=T,type.measure='auc')
-auroc_cvfold <- apply(mdl_cv$fit.preval, 1, function(eta) auc_roc(eta,y_cure))
-max(auroc_cvfold)
+# Use CV.glmnet for fit LOO
+stime <- Sys.time()
+mdl_cv <- cv.glmnet(x=X_cure_s,y=y_cure, family='binomial',
+                    nfolds = nrow(X_cure), keep=T,
+                    type.measure='deviance', standardize=F, grouped = F)
+auroc_cvfold <- apply(mdl_cv$fit.preval, 2, function(eta) auroc(eta,y_cure))
+print(Sys.time() - stime)
+# Find winning lambda
+idx_best <- which.max(auroc_cvfold)
+print(max(auroc_cvfold))
+lam_best <- mdl_cv$lambda[idx_best]
+mdl_cure <- glmnet(x=X_cure_s,y=y_cure, family='binomial',lambda = lam_best)
+# Run selective inference
+SI_cure <- fixedLassoInf(x=X_cure_s,y=y_cure,
+                         family='binomial',alpha=0.05,
+                         beta = as.vector(coef(mdl_cure)),
+                         lambda = lam_best*nrow(X_cure))
+bhat_cure <- tibble(cn=names(SI_cure$vars),coef=SI_cure$coef0,
+       pval=SI_cure$pv,lb=SI_cure$ci[,1],ub=SI_cure$ci[,2])
+
+# Scale Xmat using cure params
+Xmat_scure <- sweep(sweep(Xmat,2,mu_X_cure,'-'),2,se_X_cure,'/')
 
 # Get the predicted weights
-cure_weights <- cbind(1,Xmat) %*% coef(mdl_cv,s='lambda.min')
-cure_weights <- 1/(1+exp(-cure_weights[,1]))
-rm(list=c('X_cure','y_cure'))
+cure_weights <- 1/(1+exp(-as.vector(predict(mdl_cure, newx=Xmat_scure))))
 
-y_cured <- y_cured %>% mutate(cweights=cure_weights)
-y_cured <- y_cured %>% mutate(weights=ifelse(cured=='cured',0,ifelse(cured=='not-cured',1,1-cweights)))
+y_cured <- y_cured %>% mutate(cweights=cure_weights) %>% 
+  mutate(cweights2=ifelse(cured=='not-cured',0,cweights))
+# y_cured <- y_cured %>% mutate(weights=ifelse(cured=='cured',0,ifelse(cured=='not-cured',1,1-cweights)))
 
-# --------- (2) FIT UNIVARIATE EXPONENTIAL MODELS ----------- #
+##############################################
+# --------- (2) FIT HIGH-DIM COX ----------- #
+
+p <- seq(0.5,1,0.01)
+dat_p <- tibble(p=p,m=sapply(p, function(x) mean(y_cured$cweights<x)))
+dat_p %>% mutate(dd=m-lag(m,1)) %>% tail(10)
+plot(dat_p$p, dat_p$m)
+abline(v=0.955)
+
+idx_surv <- which(y_cured$cweights2<=0.95)
+print(sprintf('Using %i of %i non-cured rows', length(idx_surv),nrow(y_cured)))
 
 # Remove patients who we know to be cured
-X_sub <- xdat[y_cured$weights>0,]
-cn_numeric <- names(which(sapply(X_sub,class)=='numeric'))
-# Scale the continuous variables to help with likelihood
-X_sub[,cn_numeric] <- scale(X_sub[,cn_numeric])
+X_surv <- Xmat[idx_surv,]
+X_surv_s <- scale(X_surv)
+mu_X_surv <- attr(X_surv_s,'scaled:center')
+se_X_surv <- attr(X_surv_s,'scaled:scale')
+y_surv <- with(y_cured[idx_surv,],Surv(t2e, reop))
 
-y_sub <- y_cured %>% filter(weights >0) %>% select(-cured)
-So_sub <- with(y_sub, Surv(t2e, reop))
+# Use CV.glmnet for fit LOO
+stime <- Sys.time()
+cv_surv <- cv.glmnet(x=X_surv_s,y=y_surv, family='cox',
+                    nfolds = nrow(X_surv), keep=T,
+                    type.measure='deviance', standardize=F)
+print(Sys.time() - stime)
+res_conc <- apply(cv_surv$fit.preval, 2, 
+                  function(eta) survConcordance.fit(y=y_surv, x=eta)) %>% 
+  t %>% as_tibble %>% mutate(num=concordant+0.5*tied.risk) %>% 
+  mutate(den=num+discordant) %>% mutate(conc=num/den,lam=cv_surv$lambda) %>% 
+  dplyr::select(c(lam,conc))
+res_conc %>% arrange(-conc) %>% head(1) %>% print
+lam_surv_star <- res_conc %>% arrange(-conc) %>% pull(lam) %>% head(1)
+# Refit
+mdl_surv <- glmnet(x=X_surv_s,y=y_surv, family='cox', standardize=F,
+                   lambda = lam_surv_star)
+# Get SI
+SI_surv <- fixedLassoInf(x=X_surv_s,y=y_surv[,1],status = y_surv[,2],
+                         family='cox',alpha=0.05,
+                         beta = as.vector(coef(mdl_surv)),
+                         lambda = lam_surv_star*nrow(X_surv))
+bhat_surv <- tibble(cn=colnames(X_surv_s)[SI_surv$vars] ,coef=SI_surv$coef0,
+                    pval=SI_surv$pv,lb=SI_surv$ci[,1],ub=SI_surv$ci[,2])
 
-cn_X <- colnames(X_sub)
+################################################
+# --------- (3) FIT SURVIVAL MODEL ----------- #
 
-# Gets SEs close to zero
-# ff <- as.formula(str_c('So_sub~',str_c(colnames(X_sub),collapse='+')))
-# flexsurvreg(ff, data=X_sub, dist='exponential',weights=y_sub$weights)
+mdl_cox <- coxph(y_surv~X_surv_s[,bhat_surv$cn])
+score_cox <- predict(mdl_cox, data.frame(X_surv_s))
 
-holder <- vector('list',length(cn_X))
-jj <- 0
-for (cn in cn_X) {
-  print(cn)
-  jj <- jj + 1
-  # Exponential model
-  fcn <- as.formula(paste0('So_sub~',cn))
-  mdl_exp <- flexsurvreg(fcn, data=X_sub, dist='exponential',weights=y_sub$weights)
-  # Get the p-values
-  vv <- names(mdl_exp$coefficients)
-  tmp <- as_tibble(mdl_exp$res) %>% mutate(cn=cn,vv=vv,pval=2*pnorm(abs(est/se),lower.tail=F)) %>% 
-    select(c(cn,vv,est,pval))
-  holder[[jj]] <- tmp
-}
-dat_exp <- do.call('rbind',holder)
+########################################
+# --------- (4) MAKE PLOTS ----------- #
 
-# Plot the distribution of 
-dat_exp %>% filter(vv!='rate') %>% arrange(pval) %>% mutate(pfdr=p.adjust(pval,'bonferroni'))
+df_bhat <- rbind(mutate(bhat_cure,tt='cure'),mutate(bhat_surv,tt='cox'))
+df_bhat <- df_bhat %>% 
+  mutate(is_sig=ifelse((pval<0.05) & (sign(lb)==sign(ub)),T,F)) %>% 
+  mutate_at(vars(c('lb','ub')),list(~ifelse(abs(.)==Inf,NA, .))) %>% 
+  mutate(bound=ifelse(sign(coef)==1, lb, ub)) %>%
+  mutate(bound=ifelse(is_sig, bound, NA))
 
-# bhat_exp <- mdl_exp$coefficients
-# lam_exp <- exp(X[ii,,drop=F] %*% bhat_exp)
-# mat[ii,'med_exp']  <- qexp(p=0.5,rate=lam_exp)
-
-# --------- (3) COMPARE TO SURVIVAL MODELS ----------- #
+gg_bhat <- ggplot(df_bhat, aes(x=fct_reorder2(cn,coef,is_sig), y=coef,color=is_sig)) + 
+  geom_point(size=3) + facet_wrap(~tt,scales='free_x') + 
+  theme_bw() + ggtitle('Significance for SI coefficients') + 
+  theme(axis.title.x = element_blank(), axis.text.x = element_text(angle=90)) + 
+  geom_hline(yintercept = 0, linetype='dashed')
+  # geom_linerange(aes(ymin=bound,ymax=coef)) + 
+  # geom_linerange(aes(ymin=coef,ymax=bound))
+gg_bhat
 
 
-So_all <- with(ydat,Surv(t2e,reop))
-X_all <- model.matrix(~.,data=xdat)[,-1]
-set.seed(1234)
-cox_all <- cv.glmnet(x=X_all, y=So_all, type.measure='C', nfolds=5, family='cox', keep=T)
-conc_all <- apply(cox_all$fit.preval, 2, function(x) concordancefit(y=So_all,x)$concordance)
-max(conc_all)
 
-
-X_cure <- model.matrix(~.,data=X_sub)[,-1]
-y_cure <- So_sub
-set.seed(1234)
-cox_cure <- cv.glmnet(x=X_cure, y=y_cure, type.measure='C', nfolds=5, family='cox', keep=T, weights=y_sub$weights)
-conc_cure <- apply(cox_cure$fit.preval, 2, function(x) concordancefit(y=y_cure,x)$concordance)
-max(conc_cure)
-
-
-# --------- (4) PLOTS ----------- #
-
-# Notice the survival flatline
-plot(survfit(Surv(t2e, reop) ~ 1, data = ydat),
-     xlab = "Months", ylab = "Overall survival probability",main='KM curve with no weights')
-
-plot(survfit(Surv(t2e, reop) ~ 1, data = y_cured, weights = weights, subset = weights>0),
-     xlab = "Months", ylab = "Overall survival probability",main='KM Curve with Weights')
-
-plot(survfit(Surv(t2e, reop) ~ 1, data = y_cured, subset = reop==1),
-     xlab = "Months", ylab = "Overall survival probability",main='KM Curve for event-only')
-
-gg_weights <- ggplot(y_cured,aes(x=cweights)) + theme_bw() +
-  geom_histogram(bins=10,color='red',fill='grey') + facet_wrap(~cured) + 
-  ggtitle('Distribution of cure probabilities')
-gg_weights
-
-gg_rate <- ggplot(filter(dat_exp,vv=='rate' & pval<0.05),aes(x=est)) + theme_bw() + 
-            geom_histogram(bins=10,color='blue',fill='grey') + 
-            ggtitle('Distribution of univariate rate parameters')
-gg_rate
 
