@@ -82,7 +82,8 @@ pred_cols=c("Year_Sx","Sex","Age_sx_Mos","Anomalies","Who_indicated",
             "ketoralac","IV_Fluid",
             "Duration_IV","Constipation_prophy","Mobilization",
             "Return_Diet",
-            'Pre_op_APD','Post_op_APD','sec_APD','Last_APD')
+            'Pre_op_APD','Post_op_APD','sec_APD','Last_APD',
+            'percent_improve', 'percent_improve_2nd', 'percent_improve_lastffup')
 
 
 fn1 <- paste0("pyloplasty_preproc_y_", Sys.Date(),".rds")

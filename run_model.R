@@ -50,14 +50,15 @@ cn_fctr <- sapply(xdat,class) %>% data.frame %>% set_colnames('cc') %>% rownames
 fprop <- 0.02
 xdat <- xdat %>% mutate_at(cn_fctr,function(x) fct_lump(x,prop=fprop))
 # Remove NG_tube & IV Vluid
-xdat <- xdat %>% select(-c(NG_tube,IV_Fluid))
+xdat <- xdat %>% dplyr::select(-c(NG_tube,IV_Fluid))
 # Impute Blocks
 mode_Blocks <- table(xdat$Blocks) %>% sort(T) %>% extract(1) %>% names
 xdat$Blocks <- ifelse(is.na(xdat$Blocks),mode_Blocks, as.character(xdat$Blocks))
 # Aggregate approach
 xdat$Approach <- fct_lump(xdat$Approach,n=2)
 # Missing value imputation for APD
-cn_apd <- c('Pre_op_APD','Post_op_APD','sec_APD','Last_APD')
+cn_apd <- c('Pre_op_APD','Post_op_APD','sec_APD','Last_APD',
+            'percent_improve', 'percent_improve_2nd', 'percent_improve_lastffup')
 X_apd <- xdat[,cn_apd]
 cn_apd <- names(sort(apply(is.na(X_apd),2,sum)))
 # Impute lowest missing with median value, then train iterative regression models
@@ -99,7 +100,7 @@ stopifnot(length(cn_drop)==0)
 # Subset to y_cured labels
 idx_keep <- which(y_cured$cured!='unknown')
 # Create glmnet-friendly dataformat
-X_cure <- as.matrix(Xmat[idx_keep,])
+X_cure <- Xmat[idx_keep,]
 y_cure <- ifelse(y_cured[idx_keep,]$cured=='cured',1,0)
 X_cure_s <- scale(X_cure)
 mu_X_cure <- attr(X_cure_s,'scaled:center')
@@ -124,7 +125,7 @@ SI_cure <- fixedLassoInf(x=X_cure_s,y=y_cure,
                          lambda = lam_best*nrow(X_cure))
 bhat_cure <- tibble(cn=names(SI_cure$vars),coef=SI_cure$coef0,
        pval=SI_cure$pv,lb=SI_cure$ci[,1],ub=SI_cure$ci[,2])
-
+bhat_cure %>% filter(pval < 0.05)
 # Scale Xmat using cure params
 Xmat_scure <- sweep(sweep(Xmat,2,mu_X_cure,'-'),2,se_X_cure,'/')
 
@@ -144,7 +145,7 @@ dat_p %>% mutate(dd=m-lag(m,1)) %>% tail(10)
 plot(dat_p$p, dat_p$m)
 abline(v=0.955)
 
-idx_surv <- which(y_cured$cweights2<=0.95)
+idx_surv <- which(y_cured$cweights2<=0.90)
 print(sprintf('Using %i of %i non-cured rows', length(idx_surv),nrow(y_cured)))
 
 # Remove patients who we know to be cured
@@ -177,6 +178,7 @@ SI_surv <- fixedLassoInf(x=X_surv_s,y=y_surv[,1],status = y_surv[,2],
                          lambda = lam_surv_star*nrow(X_surv))
 bhat_surv <- tibble(cn=colnames(X_surv_s)[SI_surv$vars] ,coef=SI_surv$coef0,
                     pval=SI_surv$pv,lb=SI_surv$ci[,1],ub=SI_surv$ci[,2])
+bhat_surv %>% filter(pval < 0.1)
 
 ################################################
 # --------- (3) FIT SURVIVAL MODEL ----------- #
@@ -189,7 +191,8 @@ score_cox <- predict(mdl_cox, data.frame(X_surv_s))
 
 df_bhat <- rbind(mutate(bhat_cure,tt='cure'),mutate(bhat_surv,tt='cox'))
 df_bhat <- df_bhat %>% 
-  mutate(is_sig=ifelse((pval<0.05) & (sign(lb)==sign(ub)),T,F)) %>% 
+  mutate(is_sig=ifelse(pval<0.05,T,F)) %>% 
+  # mutate(is_sig=ifelse((pval<0.05) & (sign(lb)==sign(ub)),T,F)) %>% 
   mutate_at(vars(c('lb','ub')),list(~ifelse(abs(.)==Inf,NA, .))) %>% 
   mutate(bound=ifelse(sign(coef)==1, lb, ub)) %>%
   mutate(bound=ifelse(is_sig, bound, NA))
