@@ -123,8 +123,10 @@ dist_auroc <- replicate(1000,{
   idx <- sample(length(y_cure),length(y_cure),T)  
   auroc(eta_auroc[idx],y_cure[idx])
 })
-hist(dist_auroc)
-quantile(dist_auroc,c(0.025,0.975))
+ggplot(data.frame(x=dist_auroc),aes(x=x)) + geom_histogram(fill='grey',color='red') + 
+  geom_vline(xintercept = quantile(dist_auroc,0.025)) + 
+  geom_vline(xintercept = quantile(dist_auroc,0.975)) + 
+  theme_bw() + ggtitle('Bootstrap distribution of LOO-AUROC for Cure Model')
 
 
 mdl_cure <- glmnet(x=X_cure_s,y=y_cure, family='binomial',lambda = lam_best)
@@ -184,7 +186,10 @@ dist_conc <- replicate(1000,{
   idx <- sample(nrow(y_surv),nrow(y_surv),T)  
   survConcordance(y_surv[idx]~ eta_star[idx])$concordance
 })
-hist(dist_conc)
+ggplot(data.frame(x=dist_conc),aes(x=x)) + geom_histogram(fill='grey',color='blue') + 
+  geom_vline(xintercept = quantile(dist_conc,0.025)) + 
+  geom_vline(xintercept = quantile(dist_conc,0.975)) + 
+  theme_bw() + ggtitle('Bootstrap distribution of LOO-Concordance for Survival Model')
 quantile(dist_conc,c(0.025,0.975))
 
 
