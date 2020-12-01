@@ -117,6 +117,16 @@ print(Sys.time() - stime)
 idx_best <- which.max(auroc_cvfold)
 print(max(auroc_cvfold))
 lam_best <- mdl_cv$lambda[idx_best]
+# Distribution of AUROC
+eta_auroc <- mdl_cv$fit.preval[,which(mdl_cv$lambda==lam_best)]
+dist_auroc <- replicate(1000,{
+  idx <- sample(length(y_cure),length(y_cure),T)  
+  auroc(eta_auroc[idx],y_cure[idx])
+})
+hist(dist_auroc)
+quantile(dist_auroc,c(0.025,0.975))
+
+
 mdl_cure <- glmnet(x=X_cure_s,y=y_cure, family='binomial',lambda = lam_best)
 # Run selective inference
 SI_cure <- fixedLassoInf(x=X_cure_s,y=y_cure,
@@ -168,6 +178,16 @@ res_conc <- apply(cv_surv$fit.preval, 2,
   dplyr::select(c(lam,conc))
 res_conc %>% arrange(-conc) %>% head(1) %>% print
 lam_surv_star <- res_conc %>% arrange(-conc) %>% pull(lam) %>% head(1)
+eta_star <- cv_surv$fit.preval[,which(cv_surv$lambda==lam_surv_star)]
+
+dist_conc <- replicate(1000,{
+  idx <- sample(nrow(y_surv),nrow(y_surv),T)  
+  survConcordance(y_surv[idx]~ eta_star[idx])$concordance
+})
+hist(dist_conc)
+quantile(dist_conc,c(0.025,0.975))
+
+
 # Refit
 mdl_surv <- glmnet(x=X_surv_s,y=y_surv, family='cox', standardize=F,
                    lambda = lam_surv_star)
