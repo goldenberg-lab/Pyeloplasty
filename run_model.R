@@ -231,6 +231,12 @@ gg_bhat <- ggplot(df_bhat, aes(x=fct_reorder2(cn,coef,is_sig), y=coef,color=is_s
   # geom_linerange(aes(ymin=coef,ymax=bound))
 gg_bhat
 
+#######################################################
+# --------- (5) SAVE FIGURES FOR NOTEBOOK ----------- #
 
-
+df_auroc <- data.frame(auroc=dist_auroc)
+df_conc <- data.frame(conc=as.vector(dist_conc))
+df_bhat <- df_bhat %>% dplyr::select(-c(lb,ub,bound))
+save(dat_p,df_auroc, df_conc, df_bhat, file = file.path(dir_base,'fig_data.RData'))
+     
 
