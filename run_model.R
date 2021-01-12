@@ -157,7 +157,7 @@ dat_p %>% mutate(dd=m-lag(m,1)) %>% tail(10)
 plot(dat_p$p, dat_p$m)
 abline(v=0.955)
 
-idx_surv <- which(y_cured$cweights2<=0.90)
+idx_surv <- which((y_cured$cweights2 < 0.95) & (y_cured$cured!='cured'))
 print(sprintf('Using %i of %i non-cured rows', length(idx_surv),nrow(y_cured)))
 
 # Remove patients who we know to be cured
