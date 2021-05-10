@@ -18,8 +18,13 @@ head(pyl)
 ###   excluding Angiopexy = 1 and time to reoperation >= 30 months
 ###
 
+
 pyl = pyl[pyl$Angiopexy != 1,]
+dat_miss <- pyl[((pyl$Time_to_event_allmo > 30) & (pyl$Reoperation == 1)),]
+dat_miss[,c('ID','Sx_date','Year_Sx','time_to_event_day')]
+
 pyl = pyl[!((pyl$Time_to_event_allmo > 30) & (pyl$Reoperation == 1)),]
+
 
 dim(pyl)
 

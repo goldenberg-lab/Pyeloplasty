@@ -127,7 +127,7 @@ ggplot(data.frame(x=dist_auroc),aes(x=x)) + geom_histogram(fill='grey',color='re
   geom_vline(xintercept = quantile(dist_auroc,0.025)) + 
   geom_vline(xintercept = quantile(dist_auroc,0.975)) + 
   theme_bw() + ggtitle('Bootstrap distribution of LOO-AUROC for Cure Model')
-
+quantile(dist_auroc,c(0.025,0.975))
 
 mdl_cure <- glmnet(x=X_cure_s,y=y_cure, family='binomial',lambda = lam_best)
 # Run selective inference
@@ -160,6 +160,9 @@ abline(v=0.955)
 idx_surv <- which((y_cured$cweights2 < 0.95) & (y_cured$cured!='cured'))
 print(sprintf('Using %i of %i non-cured rows', length(idx_surv),nrow(y_cured)))
 
+y_cured %>% mutate(is_w = cweights2 < 0.95) %>% 
+  filter(cured != 'cured') %>% group_by(cured,is_w) %>% count
+
 # Remove patients who we know to be cured
 X_surv <- Xmat[idx_surv,]
 X_surv_s <- scale(X_surv)
@@ -178,7 +181,6 @@ res_conc <- apply(cv_surv$fit.preval, 2,
   t %>% as_tibble %>% mutate(num=concordant+0.5*tied.risk) %>% 
   mutate(den=num+discordant) %>% mutate(conc=num/den,lam=cv_surv$lambda) %>% 
   dplyr::select(c(lam,conc))
-res_conc %>% arrange(-conc) %>% head(1) %>% print
 lam_surv_star <- res_conc %>% arrange(-conc) %>% pull(lam) %>% head(1)
 eta_star <- cv_surv$fit.preval[,which(cv_surv$lambda==lam_surv_star)]
 
@@ -190,6 +192,8 @@ ggplot(data.frame(x=dist_conc),aes(x=x)) + geom_histogram(fill='grey',color='blu
   geom_vline(xintercept = quantile(dist_conc,0.025)) + 
   geom_vline(xintercept = quantile(dist_conc,0.975)) + 
   theme_bw() + ggtitle('Bootstrap distribution of LOO-Concordance for Survival Model')
+
+res_conc %>% arrange(-conc) %>% head(1) %>% print
 quantile(dist_conc,c(0.025,0.975))
 
 
