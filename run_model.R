@@ -4,7 +4,7 @@
 pckgs <- c('magrittr','stringr','dplyr','forcats','tibble',
            'cowplot','ggplot2',
            'survival','flexsurv',
-           'glmnet','selectiveInference')
+           'glmnet','selectiveInference','mvtnorm')
 for (pp in pckgs) { library(pp,character.only = T)}
 
 user <- str_split(getwd(),'\\/')[[1]][3]
@@ -44,6 +44,7 @@ fn2 <- paste0('pyloplasty_preproc_X_',udate,'.rds')
 ydat <- readRDS(file.path(dir_data, fn1)) %>% dplyr::as_tibble() %>% rename(reop=Reoperation,t2e=Time_to_event_allmo)
 # Note factors will be expanded for in univariate model
 xdat <- readRDS(file.path(dir_data, fn2)) %>% dplyr::as_tibble()
+dim(xdat)
 # factor lump if less than 2%
 cn_fctr <- sapply(xdat,class) %>% data.frame %>% set_colnames('cc') %>% rownames_to_column('cn') %>% 
                 filter(cc=='factor') %>% pull(cn)
@@ -101,6 +102,10 @@ stopifnot(length(cn_drop)==0)
 idx_keep <- which(y_cured$cured!='unknown')
 # Create glmnet-friendly dataformat
 X_cure <- Xmat[idx_keep,]
+# Remove low variance
+cn_drop_cure = names(which(apply(X_cure,2,var) < 0.01))
+sprintf('dropping cure specific columns: %s',cn_drop_cure)
+X_cure = X_cure[,setdiff(colnames(X_cure),cn_drop_cure)]
 y_cure <- ifelse(y_cured[idx_keep,]$cured=='cured',1,0)
 X_cure_s <- scale(X_cure)
 mu_X_cure <- attr(X_cure_s,'scaled:center')
@@ -115,7 +120,6 @@ auroc_cvfold <- apply(mdl_cv$fit.preval, 2, function(eta) auroc(eta,y_cure))
 print(Sys.time() - stime)
 # Find winning lambda
 idx_best <- which.max(auroc_cvfold)
-print(max(auroc_cvfold))
 lam_best <- mdl_cv$lambda[idx_best]
 # Distribution of AUROC
 eta_auroc <- mdl_cv$fit.preval[,which(mdl_cv$lambda==lam_best)]
@@ -127,9 +131,13 @@ ggplot(data.frame(x=dist_auroc),aes(x=x)) + geom_histogram(fill='grey',color='re
   geom_vline(xintercept = quantile(dist_auroc,0.025)) + 
   geom_vline(xintercept = quantile(dist_auroc,0.975)) + 
   theme_bw() + ggtitle('Bootstrap distribution of LOO-AUROC for Cure Model')
+print(max(auroc_cvfold))
 quantile(dist_auroc,c(0.025,0.975))
 
-mdl_cure <- glmnet(x=X_cure_s,y=y_cure, family='binomial',lambda = lam_best)
+# Refit lasso with full data
+mdl_cure <- glmnet(x=X_cure_s,y=y_cure, family='binomial',
+                   lambda = lam_best, standardize = F)
+
 # Run selective inference
 SI_cure <- fixedLassoInf(x=X_cure_s,y=y_cure,
                          family='binomial',alpha=0.05,
@@ -139,14 +147,13 @@ bhat_cure <- tibble(cn=names(SI_cure$vars),coef=SI_cure$coef0,
        pval=SI_cure$pv,lb=SI_cure$ci[,1],ub=SI_cure$ci[,2])
 bhat_cure %>% filter(pval < 0.05)
 # Scale Xmat using cure params
-Xmat_scure <- sweep(sweep(Xmat,2,mu_X_cure,'-'),2,se_X_cure,'/')
+Xmat_scure <- sweep(sweep(Xmat[,colnames(X_cure_s)],2,mu_X_cure,'-'),2,se_X_cure,'/')
 
 # Get the predicted weights
 cure_weights <- 1/(1+exp(-as.vector(predict(mdl_cure, newx=Xmat_scure))))
 
 y_cured <- y_cured %>% mutate(cweights=cure_weights) %>% 
   mutate(cweights2=ifelse(cured=='not-cured',0,cweights))
-# y_cured <- y_cured %>% mutate(weights=ifelse(cured=='cured',0,ifelse(cured=='not-cured',1,1-cweights)))
 
 ##############################################
 # --------- (2) FIT HIGH-DIM COX ----------- #
@@ -165,6 +172,10 @@ y_cured %>% mutate(is_w = cweights2 < 0.95) %>%
 
 # Remove patients who we know to be cured
 X_surv <- Xmat[idx_surv,]
+# Remove low variance
+cn_drop_surv = names(which(apply(X_surv,2,var) < 0.01))
+sprintf('dropping surv specific columns: %s',cn_drop_surv)
+X_surv = X_surv[,setdiff(colnames(X_surv),cn_drop_surv)]
 X_surv_s <- scale(X_surv)
 mu_X_surv <- attr(X_surv_s,'scaled:center')
 se_X_surv <- attr(X_surv_s,'scaled:scale')
@@ -209,22 +220,112 @@ bhat_surv <- tibble(cn=colnames(X_surv_s)[SI_surv$vars] ,coef=SI_surv$coef0,
                     pval=SI_surv$pv,lb=SI_surv$ci[,1],ub=SI_surv$ci[,2])
 bhat_surv %>% filter(pval < 0.1)
 
-################################################
-# --------- (3) FIT SURVIVAL MODEL ----------- #
-
-mdl_cox <- coxph(y_surv~X_surv_s[,bhat_surv$cn])
-score_cox <- predict(mdl_cox, data.frame(X_surv_s))
-
-########################################
-# --------- (4) MAKE PLOTS ----------- #
+############################################
+# --------- (3) FIT GLM MODELS ----------- #
 
 df_bhat <- rbind(mutate(bhat_cure,tt='cure'),mutate(bhat_surv,tt='cox'))
 df_bhat <- df_bhat %>% 
   mutate(is_sig=ifelse(pval<0.05,T,F)) %>% 
-  # mutate(is_sig=ifelse((pval<0.05) & (sign(lb)==sign(ub)),T,F)) %>% 
   mutate_at(vars(c('lb','ub')),list(~ifelse(abs(.)==Inf,NA, .))) %>% 
   mutate(bound=ifelse(sign(coef)==1, lb, ub)) %>%
   mutate(bound=ifelse(is_sig, bound, NA))
+
+X_surv_s_sub = as.data.frame(X_surv_s[,bhat_surv$cn])
+glm_surv = coxph(y_surv~.,data=X_surv_s_sub)
+glm_cure = glm(y_cure~X_cure_s[,bhat_cure$cn],family='binomial')
+glm_bhat = rbind(tibble(tt='cox',mdl='glm',cn=names(coef(glm_surv)),coef=coef(glm_surv)),
+                 tibble(tt='cure',mdl='glm',cn=bhat_cure$cn,coef=coef(glm_cure)[2:length(coef(glm_cure))]))
+tmp1 = mdl_surv %>%
+  coef %>% as.matrix %>% extract(,1) %>% data.frame(coef=.) %>% 
+  rownames_to_column('cn') %>% as_tibble() %>% mutate(tt='cox')
+tmp2 = mdl_cure %>% coef %>% as.matrix %>% extract(,1) %>% 
+  data.frame(coef=.) %>% 
+  rownames_to_column('cn') %>% as_tibble() %>% 
+  mutate(tt='cure') %>% filter(cn != '(Intercept)')
+lasso_bhat = mutate(rbind(tmp1, tmp2),mdl='lasso')
+
+all_bhat = rbind(glm_bhat, lasso_bhat,mutate(df_bhat[,c('tt','cn','coef')],mdl='SI'))
+all_bhat = filter(all_bhat, coef != 0)
+all_bhat %>% filter(tt=='cox') %>% tidyr::pivot_wider(cn,names_from='mdl',values_from = 'coef')
+
+#########################################
+# --------- (4) PM EXAMPLES ----------- #
+
+coef_cox = as.vector(glm_surv$coefficients)
+risk_cox = exp(as.matrix(X_surv_s_sub) %*% coef_cox)
+id_mi = which.min((X_surv_s_sub$Post_op_APD-1)**2)
+id_mx = which.min((X_surv_s_sub$Post_op_APD+1)**2)
+
+X_mi = X_surv_s_sub[id_mi,]
+X_mx = X_surv_s_sub[id_mx,]
+risk_mi = risk_cox[id_mi,]
+risk_mx = risk_cox[id_mx,]
+y_mi = y_surv[id_mi,,drop=F]
+y_mx = y_surv[id_mx,,drop=F]
+
+# FUNCTION WRAPPER TO GET SURV CIs from SIMULATION
+pm_surv = function(mu, Sigma, X, Y, x, y, nsim=100, alpha=0.05) {
+  set.seed(nsim)
+  if (!is.matrix(X)) { X = as.matrix(X) }
+  if (!is.matrix(x)) { x = as.matrix(x) }
+  mu_sim = rmvnorm(n=nsim, mean=mu, sigma=Sigma)
+  holder = list()
+  Eta = exp(X %*% mu)
+  for (i in seq(nsim)) {
+    mu_i = mu_sim[i,]
+    eta_i = exp(x %*% mu_i)[1,1]
+    res_i = coxsurv.fit(ctype=1, stype = 1, se.fit = FALSE, cluster = NULL,
+                varmat = Sigma, y = Y, x = X, wt = rep(1,nrow(X)),
+                risk = Eta, y2 = y, x2 = x, risk2 = eta_i,
+                position = NULL, strata = NULL, oldid = NULL,
+                strata2 = NULL, id2 = NULL,unlist = TRUE)
+    res_i = mutate(as.data.frame(do.call('cbind',res_i[c('time','surv')])),idx=i)
+    holder[[i]] = res_i
+  }
+  res_sim = as_tibble(do.call('rbind',holder))
+  res_sim = res_sim %>% group_by(time) %>%  
+    summarise(mu=mean(surv),lb=quantile(surv,alpha/2),ub=quantile(surv,1-alpha/2)) %>%
+    arrange(time)
+  return(res_sim)
+}
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+
+# Individualized curves
+alpha = 0.05
+tmp1 = pm_surv(mu=coef_cox, Sigma=glm_surv$var, X=X_surv_s_sub, Y=y_surv,
+        x=X_mi,y=y_mi,nsim=1000,alpha=alpha)
+tmp2 = pm_surv(mu=coef_cox, Sigma=glm_surv$var, X=X_surv_s_sub, Y=y_surv,
+               x=X_mx,y=y_mx,nsim=1000,alpha=alpha)
+zscore = qnorm(1-alpha/2)
+tmp3 = survfit(y_surv~1,conf.int=1-alpha, se.fit=T)
+tmp3 = tibble(time=tmp3$time,mu=tmp3$surv,se=tmp3$std.err,tt='KM')
+tmp3 = tmp3 %>% mutate(lb=mu-zscore*se, ub=mu-zscore*se) %>% dplyr::select(-se)
+df_km = rbind(mutate(tmp1,tt='Low'),mutate(tmp2,tt='High'),tmp3)
+
+colz = c(gg_color_hue(2)[1],'black',gg_color_hue(2)[2])
+gg_km = ggplot(filter(df_km,tt!='KM'),aes(x=time,y=mu,color=tt,fill=tt)) + 
+  theme_bw() + geom_line() + 
+  labs(y='Survival probability',x='Months',subtitle = 'Shaded area is 95% CI') + 
+  scale_color_discrete(name='APD') +
+  scale_fill_discrete(name='APD') +
+  geom_ribbon(aes(ymin=lb,ymax=ub),alpha=0.5) + 
+  scale_y_continuous(limits=c(0,1))
+gg_km
+
+########################################
+# --------- (5) MAKE PLOTS ----------- #
+
+posd = position_dodge(0.5)
+# SI==GLM for Cox, different for cure
+gg_comp = ggplot(all_bhat,aes(x=cn,y=coef,color=mdl)) + theme_bw() + 
+  geom_point(position = posd) + 
+  labs(y='Coefficient') + geom_hline(yintercept = 0) + 
+  theme(axis.title.x = element_blank(), axis.text.x = element_text(angle=90)) + 
+  facet_wrap(~tt)
+gg_comp
 
 gg_bhat <- ggplot(df_bhat, aes(x=fct_reorder2(cn,coef,is_sig), y=coef,color=is_sig)) + 
   geom_point(size=3) + facet_wrap(~tt,scales='free_x') + 
@@ -241,6 +342,6 @@ gg_bhat
 df_auroc <- data.frame(auroc=dist_auroc)
 df_conc <- data.frame(conc=as.vector(dist_conc))
 df_bhat <- df_bhat %>% dplyr::select(-c(lb,ub,bound))
-save(dat_p,df_auroc, df_conc, df_bhat, file = file.path(dir_base,'fig_data.RData'))
+save(dat_p,df_auroc, df_conc, df_bhat, df_km, file = file.path(dir_base,'fig_data.RData'))
      
 
