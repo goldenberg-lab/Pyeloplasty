@@ -1,7 +1,7 @@
 ######################################################
 # ---- SCRIPT TO FIT UNIVARIATE SURVIVAL MODELS ---- #
 
-pckgs <- c('magrittr','stringr','dplyr','forcats','tibble',
+pckgs <- c('magrittr','stringr','dplyr','forcats','tibble','readr',
            'cowplot','ggplot2',
            'survival','flexsurv',
            'glmnet','selectiveInference','mvtnorm')
@@ -25,12 +25,7 @@ auroc <- function(score,y){
   return(1-U/n1/n2);
 }
 
-# s <- c(1,3,3)
-# l <- c(0,0,1)
-# mltools::auc_roc(s,l)
-# auroc(s,l)
-
-# 6-12 months different than 1-year
+source('funs_support.R')
 
 ###########################################
 # --------- (1) LOAD THE DATA ----------- #
@@ -81,6 +76,8 @@ for (jj in seq(length(cn_apd))) {
   }
 }
 xdat[,cn_apd] <- X_apd[,cn_apd]
+# save data for later
+write_csv(xdat, file=file.path(dir_data,'xdat.csv'))
 
 ################################################
 # --------- (2) TRAIN A CURE MODEL ----------- #
@@ -155,6 +152,21 @@ cure_weights <- 1/(1+exp(-as.vector(predict(mdl_cure, newx=Xmat_scure))))
 y_cured <- y_cured %>% mutate(cweights=cure_weights) %>% 
   mutate(cweights2=ifelse(cured=='not-cured',0,cweights))
 
+# Save non-OHE version
+final_cure_prob = 1/(1+exp(-as.vector(predict(mdl_cure, newx=X_cure_s))))
+stopifnot(all(xdat[idx_keep,]$Year_Sx==X_cure[,'Year_Sx']))
+stopifnot(length(final_cure_prob) == nrow(xdat[idx_keep,]))
+
+tmp_X = xdat[idx_keep,]
+tmp_X$cure_prob_final = final_cure_prob
+tmp_X$cure_prob_LOO = eta_auroc
+tmp_X$y = y_cure
+write_csv(x=tmp_X,file=file.path(dir_data,'xdat_cure.csv'))
+
+auroc(tmp_X$cure_prob_LOO, tmp_X$y)
+auroc(tmp_X$cure_prob_final, tmp_X$y)
+
+
 ##############################################
 # --------- (2) FIT HIGH-DIM COX ----------- #
 
@@ -172,6 +184,10 @@ y_cured %>% mutate(is_w = cweights2 < 0.95) %>%
 
 # Remove patients who we know to be cured
 X_surv <- Xmat[idx_surv,]
+# Save non-OHE version
+stopifnot(all(xdat[idx_surv,]$Year_Sx==X_surv[,'Year_Sx']))
+write_csv(x=xdat[idx_surv,],file=file.path(dir_data,'xdat_surv.csv'))
+
 # Remove low variance
 cn_drop_surv = names(which(apply(X_surv,2,var) < 0.01))
 sprintf('dropping surv specific columns: %s',cn_drop_surv)
@@ -180,6 +196,9 @@ X_surv_s <- scale(X_surv)
 mu_X_surv <- attr(X_surv_s,'scaled:center')
 se_X_surv <- attr(X_surv_s,'scaled:scale')
 y_surv <- with(y_cured[idx_surv,],Surv(t2e, reop))
+
+# data.frame(q1=X_surv[,'Post_op_APD'],q2=X_surv_s[,'Post_op_APD']) %>% 
+#   as_tibble() %>% arrange(q2) %>% filter(q2 < 1) %>% tail()
 
 # Use CV.glmnet for fit LOO
 stime <- Sys.time()
@@ -263,36 +282,6 @@ risk_mx = risk_cox[id_mx,]
 y_mi = y_surv[id_mi,,drop=F]
 y_mx = y_surv[id_mx,,drop=F]
 
-# FUNCTION WRAPPER TO GET SURV CIs from SIMULATION
-pm_surv = function(mu, Sigma, X, Y, x, y, nsim=100, alpha=0.05) {
-  set.seed(nsim)
-  if (!is.matrix(X)) { X = as.matrix(X) }
-  if (!is.matrix(x)) { x = as.matrix(x) }
-  mu_sim = rmvnorm(n=nsim, mean=mu, sigma=Sigma)
-  holder = list()
-  Eta = exp(X %*% mu)
-  for (i in seq(nsim)) {
-    mu_i = mu_sim[i,]
-    eta_i = exp(x %*% mu_i)[1,1]
-    res_i = coxsurv.fit(ctype=1, stype = 1, se.fit = FALSE, cluster = NULL,
-                varmat = Sigma, y = Y, x = X, wt = rep(1,nrow(X)),
-                risk = Eta, y2 = y, x2 = x, risk2 = eta_i,
-                position = NULL, strata = NULL, oldid = NULL,
-                strata2 = NULL, id2 = NULL,unlist = TRUE)
-    res_i = mutate(as.data.frame(do.call('cbind',res_i[c('time','surv')])),idx=i)
-    holder[[i]] = res_i
-  }
-  res_sim = as_tibble(do.call('rbind',holder))
-  res_sim = res_sim %>% group_by(time) %>%  
-    summarise(mu=mean(surv),lb=quantile(surv,alpha/2),ub=quantile(surv,1-alpha/2)) %>%
-    arrange(time)
-  return(res_sim)
-}
-gg_color_hue <- function(n) {
-  hues = seq(15, 375, length = n + 1)
-  hcl(h = hues, l = 65, c = 100)[1:n]
-}
-
 # Individualized curves
 alpha = 0.05
 tmp1 = pm_surv(mu=coef_cox, Sigma=glm_surv$var, X=X_surv_s_sub, Y=y_surv,
@@ -344,4 +333,11 @@ df_conc <- data.frame(conc=as.vector(dist_conc))
 df_bhat <- df_bhat %>% dplyr::select(-c(lb,ub,bound))
 save(dat_p,df_auroc, df_conc, df_bhat, df_km, file = file.path(dir_base,'fig_data.RData'))
      
+# Save data for model evaluation
+
+
+
+save()
+
+
 
