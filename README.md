@@ -6,6 +6,6 @@ This repository contains the code necessary to reproduce the results and figure 
 2. `run_model.R`
 
 
-
+The `gen_individualized.R` script allows for the calculation of a semi-parametric survival distribution based on patient-specific information which can be modified in the script.
 
 

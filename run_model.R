@@ -250,7 +250,9 @@ df_bhat <- df_bhat %>%
   mutate(bound=ifelse(is_sig, bound, NA))
 
 X_surv_s_sub = as.data.frame(X_surv_s[,bhat_surv$cn])
-glm_surv = coxph(y_surv~.,data=X_surv_s_sub)
+# Make sure we don't save the model/x/y
+glm_surv = coxph(y_surv~.,data=X_surv_s_sub,model=F,x=F,y=F)
+stopifnot(!any(c('mode','x','y') %in% attributes(glm_surv)$names))
 glm_cure = glm(y_cure~X_cure_s[,bhat_cure$cn],family='binomial')
 glm_bhat = rbind(tibble(tt='cox',mdl='glm',cn=names(coef(glm_surv)),coef=coef(glm_surv)),
                  tibble(tt='cure',mdl='glm',cn=bhat_cure$cn,coef=coef(glm_cure)[2:length(coef(glm_cure))]))
@@ -270,24 +272,25 @@ all_bhat %>% filter(tt=='cox') %>% tidyr::pivot_wider(cn,names_from='mdl',values
 #########################################
 # --------- (4) PM EXAMPLES ----------- #
 
+Sigma_Cox = glm_surv$var
 coef_cox = as.vector(glm_surv$coefficients)
 risk_cox = exp(as.matrix(X_surv_s_sub) %*% coef_cox)
 id_mi = which.min((X_surv_s_sub$Post_op_APD-1)**2)
 id_mx = which.min((X_surv_s_sub$Post_op_APD+1)**2)
-
-X_mi = X_surv_s_sub[id_mi,]
-X_mx = X_surv_s_sub[id_mx,]
 risk_mi = risk_cox[id_mi,]
 risk_mx = risk_cox[id_mx,]
-y_mi = y_surv[id_mi,,drop=F]
-y_mx = y_surv[id_mx,,drop=F]
+X_mi = X_surv_s_sub[id_mi,]
+X_mx = X_surv_s_sub[id_mx,]
+# y_mi = y_surv[id_mi,,drop=F]
+# y_mx = y_surv[id_mx,,drop=F]
 
 # Individualized curves
 alpha = 0.05
-tmp1 = pm_surv(mu=coef_cox, Sigma=glm_surv$var, X=X_surv_s_sub, Y=y_surv,
-        x=X_mi,y=y_mi,nsim=1000,alpha=alpha)
-tmp2 = pm_surv(mu=coef_cox, Sigma=glm_surv$var, X=X_surv_s_sub, Y=y_surv,
-               x=X_mx,y=y_mx,nsim=1000,alpha=alpha)
+nsim = 1000
+tmp1 = pm_surv(bhat=coef_cox, Sigma=Sigma_Cox, Eta=risk_cox, 
+        Y=y_surv, x=X_mi, nsim=nsim, alpha=alpha)
+tmp2 = pm_surv(bhat=coef_cox, Sigma=Sigma_Cox, Eta=risk_cox, 
+               Y=y_surv, x=X_mx, nsim=nsim, alpha=alpha)
 zscore = qnorm(1-alpha/2)
 tmp3 = survfit(y_surv~1,conf.int=1-alpha, se.fit=T)
 tmp3 = tibble(time=tmp3$time,mu=tmp3$surv,se=tmp3$std.err,tt='KM')
@@ -295,12 +298,12 @@ tmp3 = tmp3 %>% mutate(lb=mu-zscore*se, ub=mu-zscore*se) %>% dplyr::select(-se)
 df_km = rbind(mutate(tmp1,tt='Low'),mutate(tmp2,tt='High'),tmp3)
 
 colz = c(gg_color_hue(2)[1],'black',gg_color_hue(2)[2])
-gg_km = ggplot(filter(df_km,tt!='KM'),aes(x=time,y=mu,color=tt,fill=tt)) + 
-  theme_bw() + geom_line() + 
-  labs(y='Survival probability',x='Months',subtitle = 'Shaded area is 95% CI') + 
+gg_km = ggplot(filter(df_km,tt!='KM'),aes(x=time,y=mu,color=tt,fill=tt)) +
+  theme_bw() + geom_line() +
+  labs(y='Survival probability',x='Months',subtitle = 'Shaded area is 95% CI') +
   scale_color_discrete(name='APD') +
   scale_fill_discrete(name='APD') +
-  geom_ribbon(aes(ymin=lb,ymax=ub),alpha=0.5) + 
+  geom_ribbon(aes(ymin=lb,ymax=ub),alpha=0.5) +
   scale_y_continuous(limits=c(0,1))
 gg_km
 
@@ -334,10 +337,14 @@ df_bhat <- df_bhat %>% dplyr::select(-c(lb,ub,bound))
 save(dat_p,df_auroc, df_conc, df_bhat, df_km, file = file.path(dir_base,'fig_data.RData'))
      
 # Save data for model evaluation
-
-
-
-save()
-
-
+lst_cox = list(bhat=glm_surv$coefficients, Sigma=glm_surv$var,
+               eta = glm_surv$linear.predictors,
+               y = y_surv,
+               n=nrow(X_surv_s_sub), p=ncol(X_surv_s_sub),
+               cn=colnames(X_surv_s_sub))
+norm_mu = mu_X_cure[names(mu_X_cure) %in% names(lst_cox$bhat)]
+norm_se = se_X_cure[names(se_X_cure) %in% names(lst_cox$bhat)]
+lst_cox$mu = norm_mu
+lst_cox$se = norm_se
+save(lst_cox, file = file.path(dir_base,'cox_mdl.RData'))
 

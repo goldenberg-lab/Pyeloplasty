@@ -8,21 +8,36 @@ gg_color_hue <- function(n) {
 
 
 # FUNCTION WRAPPER TO GET SURV CIs from SIMULATION
-pm_surv = function(mu, Sigma, X, Y, x, y, nsim=100, alpha=0.05) {
+# bhat: CoxPh coefficient
+# Eta: exp(X bhat)
+# Sigma: Var(bhat)
+# Y: Surv(time,event)
+# x: patient level data
+pm_surv = function(bhat, Sigma, Eta, Y, x, nsim=100, alpha=0.05) {
   set.seed(nsim)
-  if (!is.matrix(X)) { X = as.matrix(X) }
   if (!is.matrix(x)) { x = as.matrix(x) }
-  mu_sim = rmvnorm(n=nsim, mean=mu, sigma=Sigma)
+  stopifnot(length(Eta) == length(Y))
+  stopifnot(ncol(x) == length(bhat))
+  # Different beta
+  bhat_sim = rmvnorm(n=nsim, mean=bhat, sigma=Sigma)
+  # Needs to be the right dimensions, values are irrelevant
+  X2 = matrix(rep(0,length(Y)*ncol(x)),ncol=ncol(x))
   holder = list()
-  Eta = exp(X %*% mu)
   for (i in seq(nsim)) {
-    mu_i = mu_sim[i,]
-    eta_i = exp(x %*% mu_i)[1,1]
+    bhat_i = bhat_sim[i,]
+    eta_i = exp(x %*% bhat_i)[1,1]
     res_i = coxsurv.fit(ctype=1, stype = 1, se.fit = FALSE, cluster = NULL,
-                        varmat = Sigma, y = Y, x = X, wt = rep(1,nrow(X)),
-                        risk = Eta, y2 = y, x2 = x, risk2 = eta_i,
+                        varmat = Sigma,
+                        y = Y, risk = Eta, risk2 = eta_i, 
+                        x = X2,
+                        wt = NULL, y2 = NULL, x2 = NULL,
                         position = NULL, strata = NULL, oldid = NULL,
                         strata2 = NULL, id2 = NULL,unlist = TRUE)
+    # res_i = coxsurv.fit(ctype=1, stype = 1, se.fit = FALSE, cluster = NULL,
+    #                     varmat = Sigma, y = Y, x = X, wt = rep(1,nrow(X)),
+    #                     risk = Eta, y2 = y, x2 = x, risk2 = eta_i,
+    #                     position = NULL, strata = NULL, oldid = NULL,
+    #                     strata2 = NULL, id2 = NULL,unlist = TRUE)
     res_i = mutate(as.data.frame(do.call('cbind',res_i[c('time','surv')])),idx=i)
     holder[[i]] = res_i
   }
