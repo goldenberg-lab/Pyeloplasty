@@ -3,6 +3,8 @@ library(shinythemes)
 library(readr)
 library(markdown)
 library(rsconnect)
+library(googlesheets4)
+library(DT)
 
 pckgs <- c('dplyr','tibble',
            'cowplot','ggplot2',
@@ -17,36 +19,43 @@ ui <- fluidPage(theme = shinytheme("yeti"),
                                            
                   sidebarLayout(
                   sidebarPanel(#HTML('Input the following patient information to output the individualized survival function after pyeloplasty.'),
-                      HTML("<h4><b>Perioperative Information</b></h4>"),
-                      selectInput("use_cath", label = "Catheter Used", 
+                      HTML("<h4><b>Patient Information</b></h4>"),
+                      selectInput("op_type", label = "Surgical Approach", 
+                                  c("Open" = "open", "Minimally Invasive" = "MIS")),
+                      selectInput("stent_type", label = "Type of Stent used", 
+                                  c("JJ Stent" = "jj_s", "Salle Stent" = "salle", "Other" = "other")),
+                      selectInput("use_cath", label = "Indwelling catheter left after surgery", 
                                   c("Yes" = "yes", "No" = "no")),
                       selectInput("use_drain", label = "JP drain Used", 
                                   c("Yes" = "yes", "No" = "no")),
-                      selectInput("use_narcotic", label = "Narcotic Use", 
+                      selectInput("use_narcotic", label = "Narcotics used after surgery", 
                                   c("Yes" = "yes", "No" = "no")),
-                      numericInput(inputId = "dur_IV", "Duration of IV fluids (mins)", value = 30),
+                      numericInput(inputId = "LOS", "Length of stay (days)", value = 2),
+                      numericInput(inputId = "dur_IV", "Duration of IV fluids (hours)", value = 30),
                       HTML("<h4><b>Antero-Posterior Diameter (APD)</b></h4>"),
-                      numericInput(inputId = "Pre_op_APD", "Pre-operative APD (mm)", value = 35),
-                      numericInput(inputId = "Post_op_APD", "Post-operative APD (mm)", value = 25),
+                      numericInput(inputId = "Pre_op_APD", "Pre-operative APD (mm)", value = 40),
+                      numericInput(inputId = "Post_op_APD", "Post-operative APD (mm)", value = 20),
                       numericInput(inputId = "sec_APD", "Second Follow-up APD (mm)", value = 15),
                       actionButton("submitbutton", 
                                    "Determine Risk", 
                                    class = "btn btn-primary"),
+                      HTML("<br> <br> Data may be collected for quality assurance purposes")
                     ),
                     mainPanel(plotOutput(outputId = "survPlot"),
-                              htmlOutput("diagnosis")),
-                    
+                              htmlOutput("thirtymonth"),
+                              htmlOutput("diagnosis"))
                   )),
                 tabPanel("About", div(includeMarkdown("about.md"), align="justify"))
                 
                 )
 )
 
-server <- function(input, output) {
+server <- function(input, output, session) {
   
   source('funs_support.R')
   load('cox_mdl.RData')
   
+  observeEvent(input$submitbutton,{
   output$survPlot <- renderPlot({
     
     if(input$use_cath == 'Yes'){has_catheter <- 1}else{has_catheter <- 0}
@@ -80,6 +89,9 @@ server <- function(input, output) {
                         Y = lst_cox$y, x=matrix(X_row$x_s,nrow=1),
                         nsim = 1000,alpha = 0.05)
     
+      surv_24m <- surv_dist %>% filter(time==24)
+      output$thirtymonth <- renderText({paste("<br>The probability of not requiring re-intervention within 24 months is <b>", round(100*surv_24m[[2]], digits=1), "% [95%CI:", round(100*surv_24m[[3]], digits=1), ",", round(100*surv_24m[[4]], digits=1), "]</b>.")})
+    
       gg_km = ggplot(surv_dist,aes(x=time,y=mu)) +
       theme_bw(base_size=20) + geom_line() +
       labs(y='Survival probability',x='Months from pyeloplasty',subtitle = 'Shaded area is 95% confidence interval.') +
@@ -88,12 +100,15 @@ server <- function(input, output) {
     gg_km
   })
   
-  output$diagnosis <- renderText({'<h5> The survival probability estimates the likelihood of being free from re-operation over 30 months after dismembered pyeloplasty. 
-    <br> <br> More information can be found under <b> About </b>.
+  output$diagnosis <- renderText({' <br> More information can be found under <b> About </b>.
     <br> <br> <b> Reference </b> <br> Application of Machine Learning Algorithms to Identify Patients at Risk for Recurrent UPJO after Dismembered Pyeloplasty. <br>
-    <i> Drysdale E., Khondker A., Kim JK., Erdman L., Kwong JCC., Chua M., Keefe DT., Lolas M., Dos Santos J., Rickard M., Lorenzo AJ. (in preparation) </i>
-    
-    </h5>'})
+    <i> Drysdale E., Khondker A., Kim JK., Erdman L., Kwong JCC., Chua M., Keefe DT., Lolas M., Dos Santos J., Rickard M., Lorenzo AJ. (in preparation) </i> <br>
+    <br> <b> Disclaimer </b> <br> This web application does not provide medical advice.
+    Access to general information is provided for educational purposes only. Content is not recommended or endorsed 
+    by any doctor or healthcare provider. The application provided is not a substitute for medical or professional 
+    care, virtual care, consultation or the advice of your healthcare provider. You are liable or responsible for any advice, 
+    course of treatment, diagnosis or any other information, services or product obtained through this web application.
+    </h5>'})})
 }
 
 shinyApp(ui, server)
