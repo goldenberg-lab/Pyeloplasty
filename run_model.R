@@ -10,7 +10,7 @@ for (pp in pckgs) { library(pp,character.only = T)}
 user <- str_split(getwd(),'\\/')[[1]][3]
 stopifnot(user %in% c('erik drysdale','lauren edrman'))
 if (user == 'erik drysdale') {
-  dir_base <- "C:/Users/erik drysdale/Documents/projects/Pyeloplasty"
+  dir_base <- "C:/Users/erik drysdale/Documents/projects/urology/Pyeloplasty"
 } else {
   dir_base <- "C:/Users/lauren erdman/Desktop/pyloplasty"
 }
@@ -26,6 +26,7 @@ auroc <- function(score,y){
 }
 
 source('funs_support.R')
+
 
 ###########################################
 # --------- (1) LOAD THE DATA ----------- #
@@ -142,6 +143,7 @@ SI_cure <- fixedLassoInf(x=X_cure_s,y=y_cure,
                          lambda = lam_best*nrow(X_cure))
 bhat_cure <- tibble(cn=names(SI_cure$vars),coef=SI_cure$coef0,
        pval=SI_cure$pv,lb=SI_cure$ci[,1],ub=SI_cure$ci[,2])
+bhat_cure %>% mutate(p_adj=p.adjust(pval,method='fdr')) %>% arrange(p_adj)
 bhat_cure %>% filter(pval < 0.05)
 # Scale Xmat using cure params
 Xmat_scure <- sweep(sweep(Xmat[,colnames(X_cure_s)],2,mu_X_cure,'-'),2,se_X_cure,'/')

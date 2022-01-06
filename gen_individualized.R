@@ -49,6 +49,8 @@ surv_dist = pm_surv(bhat=X_row$bhat, Sigma = Sigma, Eta=exp(lst_cox$eta),
         Y = lst_cox$y, x=matrix(X_row$x_s,nrow=1),
         nsim = 1000,alpha = 0.05)
 
+surv_dist %>% filter(time == 24)
+
 
 # --- (4) PLOT IT --- #
 gg_km = ggplot(surv_dist,aes(x=time,y=mu)) +
